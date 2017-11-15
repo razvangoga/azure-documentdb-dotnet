@@ -13,6 +13,8 @@
     using Microsoft.Azure.Documents;
     using Microsoft.Azure.Documents.Client;
     using Newtonsoft.Json;
+    using Microsoft.Azure.Graphs;
+    using Microsoft.Azure.Documents.Linq;
 
     /// <summary>
     /// This sample demonstrates how to achieve high performance writes using DocumentDB.
@@ -22,6 +24,7 @@
         private static readonly string DatabaseName = ConfigurationManager.AppSettings["DatabaseName"];
         private static readonly string DataCollectionName = ConfigurationManager.AppSettings["CollectionName"];
         private static readonly int CollectionThroughput = int.Parse(ConfigurationManager.AppSettings["CollectionThroughput"]);
+        private static readonly bool InsertWithGremlin = Convert.ToBoolean(ConfigurationManager.AppSettings["InsertWithGremlin"]);
 
         private static readonly ConnectionPolicy ConnectionPolicy = new ConnectionPolicy 
         { 
@@ -34,6 +37,11 @@
                 MaxRetryAttemptsOnThrottledRequests = 10,
                 MaxRetryWaitTimeInSeconds = 60
             } 
+        };
+
+        private static readonly FeedOptions FeedOptions = new FeedOptions()
+        {
+            PopulateQueryMetrics = true,
         };
 
         private static readonly string InstanceId = Dns.GetHostEntry("LocalHost").HostName + Process.GetCurrentProcess().Id;
@@ -82,8 +90,21 @@
                     authKey,
                     ConnectionPolicy))
                 {
+                    Stopwatch stopwatch = new Stopwatch();
+                    stopwatch.Start();
+
+                    DateTime start = DateTime.Now;
+
                     var program = new Program(client);
                     program.RunAsync().Wait();
+
+                    stopwatch.Stop();
+                    DateTime end = DateTime.Now;
+
+                    Console.WriteLine($"DocumentDBBenchmark completed successfully in - {stopwatch.ElapsedMilliseconds / 1000}s");
+                    Console.WriteLine($"Started at : {start.ToLongTimeString()}");
+                    Console.WriteLine($"Ended   at : {end.ToLongTimeString()}");
+
                     Console.WriteLine("DocumentDBBenchmark completed successfully.");
                 }
             }
@@ -182,18 +203,35 @@
 
             for (var i = 0; i < numberOfDocumentsToInsert; i++)
             {
-                newDictionary["id"] = Guid.NewGuid().ToString();
-                newDictionary[partitionKeyProperty] = Guid.NewGuid().ToString();
+                string id = Guid.NewGuid().ToString();
+                string partitionKey = Guid.NewGuid().ToString();
+
+                newDictionary["id"] = id;
+                newDictionary[partitionKeyProperty] = partitionKey;
 
                 try
                 {
-                    ResourceResponse<Document> response = await client.CreateDocumentAsync(
+                    if (InsertWithGremlin)
+                    {
+                        string queryText = $"g.addV('node').property('id', '{id}').property('{partitionKeyProperty}','{partitionKey}').property('name','ala bala')";
+                        IDocumentQuery<dynamic> query = client.CreateGremlinQuery(collection, queryText, FeedOptions);
+
+                        while (query.HasMoreResults)
+                        {
+                            FeedResponse<dynamic> response = await query.ExecuteNextAsync();
+                            requestUnitsConsumed[taskId] += response.RequestCharge;
+                        }
+                    }
+                    else
+                    {
+                        ResourceResponse<Document> response = await client.CreateDocumentAsync(
                             UriFactory.CreateDocumentCollectionUri(DatabaseName, DataCollectionName),
                             newDictionary,
                             new RequestOptions() { });
 
-                    string partition = response.SessionToken.Split(':')[0];
-                    requestUnitsConsumed[taskId] += response.RequestCharge;
+                        string partition = response.SessionToken.Split(':')[0];
+                        requestUnitsConsumed[taskId] += response.RequestCharge;
+                    }
                     Interlocked.Increment(ref this.documentsInserted);
                 }
                 catch (Exception e)
