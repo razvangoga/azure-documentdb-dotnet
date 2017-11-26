@@ -120,8 +120,11 @@
 
             finally
             {
-                Console.WriteLine("Press any key to exit...");
-                Console.ReadLine();
+                if (Debugger.IsAttached)
+                {
+                    Console.WriteLine("Press any key to exit...");
+                    Console.ReadLine();
+                }
             }
         }
 
@@ -323,8 +326,11 @@
             double estimatedCostPerMonth = 0.06 * CollectionThroughput;
             double estimatedCostPerHour = estimatedCostPerMonth / (24 * 30);
             Console.WriteLine("The collection will cost an estimated ${0} per hour (${1} per month)", Math.Round(estimatedCostPerHour, 2), Math.Round(estimatedCostPerMonth, 2));
-            Console.WriteLine("Press enter to continue ...");
-            Console.ReadLine();
+            if (Debugger.IsAttached)
+            {
+                Console.WriteLine("Press enter to continue ...");
+                Console.ReadLine();
+            }
 
             return await client.CreateDocumentCollectionAsync(
                     UriFactory.CreateDatabaseUri(databaseName), 
